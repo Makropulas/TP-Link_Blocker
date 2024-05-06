@@ -1,0 +1,7 @@
+spring:
+  jpa:
+    generate-ddl: false
+    hibernate:
+      ddl-auto: none
+  application:
+    name: TP-Link_Blocker
