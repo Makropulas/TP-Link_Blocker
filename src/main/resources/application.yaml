@@ -1,7 +1,21 @@
 spring:
+
+  application:
+    name: TP-Link_Blocker
+
   jpa:
     generate-ddl: false
     hibernate:
       ddl-auto: none
-  application:
-    name: TP-Link_Blocker
+    open-in-view: false
+
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/blocker_db
+    username: blocker
+    password: wdr3600
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath*:database/initDB.sql
