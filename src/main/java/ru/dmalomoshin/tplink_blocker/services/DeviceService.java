@@ -19,15 +19,21 @@ import java.util.*;
 @Service
 @AllArgsConstructor
 public class DeviceService {
-
+    /**
+     * Захардкоженый токен авторизации
+     */
     private final String authToken = "Authorization=Basic%20TWFrcm9wdWxhczo2MWY0M2QzNzExZDliOWJkOTIxNzQ5MTYxOTBkNjRjYQ%3D%3";
+
+    /**
+     * IP-адрес для подключения к роутеру
+     */
     private final String routerIP = "http://192.168.0.1/";
 
     private final DeviceRepository deviceRepository;
 
 
     //region CRUD-operations
-    public List<Device> getDevicesFromDatabase() {
+    public List<Device> getListDevicesFromDatabase() {
         return deviceRepository.findAll();
     }
 
@@ -40,13 +46,13 @@ public class DeviceService {
                 .orElseThrow(() -> new NoSuchDeviceException(macAddress));
     }
 
-    public Device updateDeviceIndexesInDatabase(Device updatedDevice) {
-        Device device = getDeviceFromDatabase(updatedDevice.getMacAddress());
+    public Device updateDeviceInDatabase(Device updatedDevice) {
 
-        device.setIndexHosts(updatedDevice.getIndexHosts());
-        device.setIndexRules(updatedDevice.getIndexRules());
+        int id = getDeviceFromDatabase(updatedDevice.getMacAddress()).getId();
 
-        return deviceRepository.save(device);
+        updatedDevice.setId(id);
+
+        return deviceRepository.save(updatedDevice);
     }
 
     public void deleteDeviceFromDatabase(Device device) {
@@ -55,9 +61,13 @@ public class DeviceService {
     //endregion
 
 
-    public List<Device> getConnectedDevices() {
-        String sessionId = login();
-
+    /**
+     * Получить список подключенных устройств
+     *
+     * @param sessionId ID сессии
+     * @return Список подключенных устройств
+     */
+    public List<Device> getListConnectedDevices(String sessionId) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm"))
@@ -69,9 +79,6 @@ public class DeviceService {
             HttpResponse<String> response = HttpClient.newHttpClient()
                     .send(request, HttpResponse.BodyHandlers.ofString());
 
-            String message = logout(sessionId);
-            System.out.println(message);
-
             return getListDevicesFromResponse(response.body());
 
         } catch (IOException | InterruptedException e) {
@@ -79,11 +86,15 @@ public class DeviceService {
         }
     }
 
+    /**
+     * Получить список устройств из HTTP Response роутера
+     *
+     * @param response HTTP Response
+     * @return Распарсенный список устройств
+     */
     private List<Device> getListDevicesFromResponse(String response) {
-        int firstIndex = response.indexOf("(") + 1;
-        int lastIndex = response.indexOf("0,0");
 
-        String[] substring = response.substring(firstIndex, lastIndex)
+        String[] subresponse = getSubresponseFromResponse(response)
                 .replaceAll("\"", "")
                 .replaceAll(" ", "")
                 .replaceAll("\n", "")
@@ -91,33 +102,71 @@ public class DeviceService {
                 .split(",");
 
         List<Device> devicesList = new ArrayList<>();
-        for (int i = 0; i < substring.length; i += 4) {
+        for (int i = 0; i < subresponse.length; i += 4) {
             Device device = new Device();
-            device.setName(substring[i]);
-            device.setMacAddress(substring[i + 1]);
+            device.setName(subresponse[i]);
+            device.setMacAddress(subresponse[i + 1]);
             devicesList.add(device);
         }
 
         return devicesList;
     }
 
-    public Device blockDevice(Device device) {
-        String sessionId = login();
+    /**
+     * Получить подстроку из HTTP Response
+     *
+     * @param response HTTP Response
+     * @return Подстрока из HTTP Response
+     */
+    private String getSubresponseFromResponse(String response) {
+        String startSubstring = "(\n";
+        String endSubstring = "0,0";
 
-        createHost(sessionId, device);
-        createRule(sessionId, device);
+        int firstIndex = response.indexOf(startSubstring) + startSubstring.length();
+        int lastIndex = response.indexOf(endSubstring);
 
-        String message = logout(sessionId);
-        System.out.println(message);
-
-        return device;
+        return response.substring(firstIndex, lastIndex);
     }
 
-    private void createHost(String sessionId, Device device) {
+    /**
+     * Заблокировать устройство
+     *
+     * @param sessionId ID сессии
+     * @param device Блокируемое устройство
+     */
+    public void blockDevice(String sessionId, Device device) {
+
+        device.setIndexHosts(createHost(sessionId, device));
+        device.setIndexRules(createRule(sessionId, device));
+        device.setState(false);
+
+        updateDeviceInDatabase(device);
+    }
+
+    /**
+     * Создание имени для Хоста или Правила
+     *
+     * @param start Указать "Host" или "Rule"
+     * @param name Имя устройства
+     * @return Сгенерированное имя
+     */
+    private String giveNameForHostOrRule(String start, String name) {
+        return String.format("%s_%.19s", start, name);
+    }
+
+    /**
+     * Создать Хост
+     *
+     * @param sessionId ID сессии
+     * @param device Переданное утройство
+     * @return Индекс хоста в списке хостов
+     */
+    private int createHost(String sessionId, Device device) {
+        String hostName = giveNameForHostOrRule("Host", device.getName());
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm?" +
-                            "addr_type=0&hosts_lists_name=Host_" + device.getName() + "&src_ip_start=&src_ip_end=&" +
+                            "addr_type=0&hosts_lists_name=" + hostName + "&src_ip_start=&src_ip_end=&" +
                             "mac_addr=" + device.getMacAddress() + "&Changed=0&SelIndex=0&fromAdd=0&Page=1&" +
                             "Save=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C"))
                     .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm")
@@ -132,22 +181,26 @@ public class DeviceService {
                 throw new DeviceAlreadyBlockedException(device);
             }
 
-            device.setIndexHosts(getIndexFromResponse(response.body()));
-
-            System.out.println("**  **  **  **  **  **  **  **  **  **  **  **  **  **  **");
-            System.out.println("createHost: " + response.body()); //TODO дописать return индекса для перезаписи в БД
-            System.out.println("**  **  **  **  **  **  **  **  **  **  **  **  **  **  **");
+            return getIndexFromResponse(response.body());
 
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private void createRule(String sessionId, Device device) {
+    /**
+     * Создать правило
+     *
+     * @param sessionId ID сессии
+     * @param device Переданное устройство
+     * @return Индекс правила в списке правил
+     */
+    private int createRule(String sessionId, Device device) {
+        String ruleName = giveNameForHostOrRule("Rule", device.getName());
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?" +
-                            "rule_name=Rule_" + device.getName() + "&hosts_lists=" + device.getIndexHosts() +
+                            "rule_name=" + ruleName + "&hosts_lists=" + device.getIndexHosts() +
                             "&targets_lists=255&scheds_lists=255&enable=1&Changed=0&SelIndex=0&Page=1" +
                             "&Save=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C"))
                     .header(HttpHeaders.REFERER, routerIP + sessionId +
@@ -163,27 +216,35 @@ public class DeviceService {
                 throw new DeviceAlreadyBlockedException(device);
             }
 
-            device.setIndexRules(getIndexFromResponse(response.body()));
+            return getIndexFromResponse(response.body());
 
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
+    /**
+     * Получить индекс из HTTP Response
+     *
+     * @param response HTTP Response
+     * @return Индекс
+     */
     private int getIndexFromResponse(String response) {
-        String startSubstring = "(\n";
-        String endSubstring = "0,0";
-        int firstIndex = response.indexOf(startSubstring) + startSubstring.length();
-        int lastIndex = response.indexOf(endSubstring);
 
-        String[] substring = response.substring(firstIndex, lastIndex)
+        String[] subresponse = getSubresponseFromResponse(response)
                 .trim()
                 .split("\n");
 
-        return substring.length - 1;
+        return subresponse.length - 1;
     }
 
-    private boolean isBlocked(String sessionId, Device device) {
+    /**
+     * Получить HTTP Response содержащий заблокированные устройства
+     *
+     * @param sessionId ID сессии
+     * @return HTTP Response
+     */
+    private String getResponseWithBlockedDevices(String sessionId) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm"))
@@ -195,29 +256,80 @@ public class DeviceService {
             HttpResponse<String> response = HttpClient.newHttpClient()
                     .send(request, HttpResponse.BodyHandlers.ofString());
 
-            return response.body().contains("Rule_" + device.getName());
+            return getSubresponseFromResponse(response.body());
 
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
-    public Device unblockDevice(Device device) {
-        String sessionId = login();
+    /**
+     * Проверка на наличие устройства в HTTP Response
+     *
+     * @param device Переданное устройство
+     * @param response HTTP Response
+     * @return Логическое выражение
+     */
+    private boolean isBlocked(Device device, String response) {
 
-        if (isBlocked(sessionId, device)) {
-            deleteRule(sessionId, device);
-            deleteHost(sessionId, device);
-        } else
-            throw new DeviceNotBlockedException(device);
-
-        String message = logout(sessionId);
-        System.out.println(message);
-
-        return device;
+        return response.contains(giveNameForHostOrRule("Rule", device.getName()));
     }
 
-    private void deleteRule(String sessionId, Device device) {
+    /**
+     * Получить список заблокированных устройств
+     *
+     * @param sessionId ID сессии
+     * @param savedDevices Список сохраненных в базе устройств
+     * @return Список заблокированных устройств
+     */
+    public List<Device> getListBlockedDevices(String sessionId, List<Device> savedDevices) {
+
+        String response = getResponseWithBlockedDevices(sessionId);
+
+        for (Device device : savedDevices) {
+            if (isBlocked(device, response)) {
+                device.setState(false);
+                updateDeviceInDatabase(device);
+            }
+        }
+
+        return savedDevices.stream()
+                .filter(device -> !device.isState())
+                .toList();
+    }
+
+    /**
+     * Разблокировать устройство
+     *
+     * @param sessionId ID сессии
+     * @param device Переданное устройство
+     */
+    public void unblockDevice(String sessionId, Device device) {
+
+        device = getDeviceFromDatabase(device.getMacAddress());
+        String response = getResponseWithBlockedDevices(sessionId);
+
+
+        if (isBlocked(device, response)) {
+
+            device.setIndexRules(deleteRule(sessionId, device));
+            device.setIndexHosts(deleteHost(sessionId, device));
+            device.setState(true);
+
+            updateDeviceInDatabase(device);
+
+        } else
+            throw new DeviceNotBlockedException(device);
+    }
+
+    /**
+     * Удалить Правило
+     *
+     * @param sessionId ID сессии
+     * @param device Переданное устройство
+     * @return -1 (отрицательный индекс)
+     */
+    private int deleteRule(String sessionId, Device device) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?" +
@@ -234,12 +346,21 @@ public class DeviceService {
                 throw new DeviceNotBlockedException(device);
             }
 
+            return -1;
+
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private void deleteHost(String sessionId, Device device) {
+    /**
+     * Удалить Хост
+     *
+     * @param sessionId ID сессии
+     * @param device Переданное устройство
+     * @return -1 (отрицательный индекс)
+     */
+    private int deleteHost(String sessionId, Device device) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm?" +
@@ -256,16 +377,19 @@ public class DeviceService {
                 throw new DeviceNotBlockedException(device);
             }
 
-            System.out.println("**  **  **  **  **  **  **  **  **  **  **  **  **  **  **");
-            System.out.println("deleteHost: " + response.body()); //TODO дописать return индекса для перезаписи в БД
-            System.out.println("**  **  **  **  **  **  **  **  **  **  **  **  **  **  **");
+            return -1;
 
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private String login() {
+    /**
+     * Подключение к роутеру
+     *
+     * @return ID сессии
+     */
+    public String login() {
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + "userRpm/LoginRpm.htm?Save=Save"))
@@ -280,13 +404,19 @@ public class DeviceService {
             if (response.statusCode() == 200) {
                 return getSessionFromResponse(response.body());
             } else
-                return null;
+                return "";
 
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
     }
 
+    /**
+     * Получить ID сессии из HTTP Response
+     *
+     * @param response HTTP Response
+     * @return ID сессии
+     */
     private String getSessionFromResponse(String response) {
         int firstIndex = response.indexOf(routerIP) + routerIP.length();
         int lastIndex = response.indexOf("/userRpm");
@@ -294,7 +424,13 @@ public class DeviceService {
         return response.substring(firstIndex, lastIndex);
     }
 
-    private String logout(String sessionId) {
+    /**
+     * Отключение от роутера
+     *
+     * @param sessionId ID сессии
+     * @return Информационное сообщение
+     */
+    public String logout(String sessionId) {
         try {
             HttpRequest firstRequest = HttpRequest.newBuilder()
                     .uri(URI.create(routerIP + sessionId + "/userRpm/LogoutRpm.htm"))

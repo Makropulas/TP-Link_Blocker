@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="UTF-8">
+    <title>TP-Link Blocker</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        table {
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+<div class="container mt-5">
+    <div th:switch="${savedDevices}">
+        <h2 th:case="null">Нет сохранённых устройств!</h2>
+        <div th:case="*">
+            <h2>Сохраненные в базе устройства</h2>
+            <table class="table table-striped">
+                <thead>
+                <tr>
+                    <th>Имя</th>
+                    <th>MAC-адрес</th>
+                    <th></th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="device : ${savedDevices}">
+                    <td th:text="${device.name}"></td>
+                    <td th:text="${device.macAddress}"></td>
+                    <td>
+                        <form th:if="${device.state}" th:action="@{/tp-link/block}" th:object="${device}" method="post">
+                            <input name="name" type="hidden" th:value="${device.name}"/>
+                            <input name="macAddress" type="hidden" th:value="${device.macAddress}"/>
+                            <input type="submit" class="btn btn-danger" value="Заблокировать "/>
+                        </form>
+                        <form th:unless="${device.state}" th:action="@{/tp-link/unblock}" th:object="${device}"
+                              method="post">
+                            <input name="name" type="hidden" th:value="${device.name}"/>
+                            <input name="macAddress" type="hidden" th:value="${device.macAddress}"/>
+                            <input type="submit" class="btn btn-info" value="Разблокировать"/>
+                        </form>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <br><br>
+        <p><a class="btn btn-primary" href="/tp-link">Вернуться на главную</a></p>
+    </div>
+</div>
+</body>
+</html>
