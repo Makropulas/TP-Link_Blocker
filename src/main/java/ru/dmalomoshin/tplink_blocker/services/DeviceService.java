@@ -290,6 +290,13 @@ public class DeviceService {
             if (isBlocked(device, response)) {
                 device.setState(false);
                 updateDeviceInDatabase(device);
+            } else {
+                if (!device.isState()) {
+                    device.setIndexRules(-1);
+                    device.setIndexHosts(-1);
+                    device.setState(true);
+                    updateDeviceInDatabase(device);
+                }
             }
         }
 
@@ -312,11 +319,16 @@ public class DeviceService {
 
         if (isBlocked(device, response)) {
 
+            int hostIndex = device.getIndexHosts();
+            int ruleIndex = device.getIndexRules();
+
             device.setIndexRules(deleteRule(sessionId, device));
             device.setIndexHosts(deleteHost(sessionId, device));
             device.setState(true);
 
             updateDeviceInDatabase(device);
+
+            recalculateIndexes(hostIndex, ruleIndex);
 
         } else
             throw new DeviceNotBlockedException(device);
@@ -381,6 +393,35 @@ public class DeviceService {
 
         } catch (IOException | InterruptedException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Пересчитать индексы устройств после разблокировки
+     *
+     * @param hostIndex Индекс хоста разблокированного устройства
+     * @param ruleIndex Индекс правила разблокированного устройства
+     */
+    private void recalculateIndexes(int hostIndex, int ruleIndex) {
+        List<Device> devices = getListDevicesFromDatabase();
+
+        for (Device device : devices) {
+            int deviceIndexHosts = device.getIndexHosts();
+            int deviceIndexRules = device.getIndexRules();
+            boolean flag = false;
+
+            if (deviceIndexHosts > hostIndex) {
+                device.setIndexHosts(--deviceIndexHosts);
+                flag = true;
+            }
+            if (deviceIndexRules > ruleIndex) {
+                device.setIndexRules(--deviceIndexRules);
+                flag = true;
+            }
+
+            if (flag) {
+                deviceRepository.save(device);
+            }
         }
     }
 
