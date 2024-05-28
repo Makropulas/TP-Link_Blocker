@@ -22,7 +22,7 @@ public class DeviceControllerRest {
     @GetMapping()
     public ResponseEntity<?> getConnectedDevices() {
         String sessionId = deviceService.login();
-        List<Device> response = deviceService.getListConnectedDevices(sessionId);
+        List<Device> response = deviceService.getListClientsDHCP(sessionId);
         deviceService.logout(sessionId);
         return new ResponseEntity<>(response, HttpStatus.OK);
     }

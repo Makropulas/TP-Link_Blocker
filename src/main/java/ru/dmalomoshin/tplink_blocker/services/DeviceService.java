@@ -1,6 +1,7 @@
 package ru.dmalomoshin.tplink_blocker.services;
 
 import lombok.AllArgsConstructor;
+import lombok.NonNull;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import ru.dmalomoshin.tplink_blocker.domain.Device;
@@ -60,41 +61,117 @@ public class DeviceService {
     }
     //endregion
 
-
     /**
-     * Получить список подключенных устройств
+     * Сформировать HttpRequest и получить HttpResponse
      *
-     * @param sessionId ID сессии
-     * @return Список подключенных устройств
+     * @param requestURI     URI HttpRequest
+     * @param requestReferer Referer HttpRequest
+     * @return HttpResponse
      */
-    public List<Device> getListConnectedDevices(String sessionId) {
+    private HttpResponse<String> getHttpResponse(final String requestURI, @NonNull final String requestReferer) {
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm")
+            final HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(requestURI))
+                    .header(HttpHeaders.REFERER, requestReferer)
                     .header(HttpHeaders.COOKIE, authToken)
                     .GET()
                     .build();
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
+            return HttpClient.newHttpClient()
                     .send(request, HttpResponse.BodyHandlers.ofString());
 
-            return getListDevicesFromResponse(response.body());
-
-        } catch (IOException | InterruptedException e) {
+        } catch (final IOException | InterruptedException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Получить список клиентов DHCP
+     *
+     * @param sessionId ID сессии
+     * @return список клиентов DHCP
+     */
+    public List<Device> getListClientsDHCP(final String sessionId) {
+
+        String uri = routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm";
+        String referer = routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm";
+
+        HttpResponse<String> response = getHttpResponse(uri, referer);
+
+        return getListDevicesFromResponse(response.body());
+    }
+
+    /**
+     * Получить список подключенных устройств 2.4ГГц
+     *
+     * @param sessionId ID сессии
+     * @return список подключенных устройств 2.4ГГц
+     */
+    public List<Device> getListConnectedDevices2and4Ghz(final String sessionId) {
+
+        String uri = routerIP + sessionId + "/userRpm/WlanStationRpm.htm";
+        String referer = routerIP + sessionId + "/userRpm/MenuRpm.htm";
+
+        HttpResponse<String> response = getHttpResponse(uri, referer);
+
+        return getListDevicesFromResponse(response.body(), "hostList");
+    }
+
+    /**
+     * Получить список подключенных устройств 5ГГц
+     *
+     * @param sessionId ID сессии
+     * @return список подключенных устройств 5ГГц
+     */
+    public List<Device> getListConnectedDevices5Ghz(final String sessionId) {
+
+        String uri = routerIP + sessionId + "/userRpm/WlanStationRpm_5g.htm";
+        String referer = routerIP + sessionId + "/userRpm/MenuRpm.htm";
+
+        HttpResponse<String> response = getHttpResponse(uri, referer);
+
+        return getListDevicesFromResponse(response.body(), "hostList");
     }
 
     /**
      * Получить список устройств из HTTP Response роутера
      *
      * @param response HTTP Response
-     * @return Распарсенный список устройств
+     * @return распарсенный список устройств
      */
-    private List<Device> getListDevicesFromResponse(String response) {
+    private List<Device> getListDevicesFromResponse(@NonNull final String response) {
 
-        String[] subresponse = getSubresponseFromResponse(response)
+        String[] subResponse = getSubresponseFromResponse(response)
+                .replaceAll("\"", "")
+                .replaceAll(" ", "")
+                .replaceAll("\n", "")
+                .trim()
+                .split(",");
+
+        List<Device> devicesList = new ArrayList<>();
+        for (int i = 0; i < subResponse.length; i += 4) {
+            Device device = new Device();
+            device.setName(subResponse[i]);
+            device.setMacAddress(subResponse[i + 1]);
+            devicesList.add(device);
+        }
+
+        return devicesList;
+    }
+
+    /**
+     * Получить список устройств из HTTP Response роутера (2 аргумента)
+     *
+     * @param response HTTP Response
+     * @param start    начало подзапроса
+     * @return распарсенный список устройств
+     */
+    private List<Device> getListDevicesFromResponse(@NonNull final String response, String start) {
+
+        int firstIndex = response.indexOf(start);
+        String trimmedResponse = response.substring(firstIndex);
+
+        String[] subresponse = getSubresponseFromResponse(trimmedResponse)
                 .replaceAll("\"", "")
                 .replaceAll(" ", "")
                 .replaceAll("\n", "")
@@ -103,9 +180,7 @@ public class DeviceService {
 
         List<Device> devicesList = new ArrayList<>();
         for (int i = 0; i < subresponse.length; i += 4) {
-            Device device = new Device();
-            device.setName(subresponse[i]);
-            device.setMacAddress(subresponse[i + 1]);
+            Device device = getDeviceFromDatabase(subresponse[i]);
             devicesList.add(device);
         }
 
@@ -116,9 +191,9 @@ public class DeviceService {
      * Получить подстроку из HTTP Response
      *
      * @param response HTTP Response
-     * @return Подстрока из HTTP Response
+     * @return подстрока из HTTP Response
      */
-    private String getSubresponseFromResponse(String response) {
+    private String getSubresponseFromResponse(@NonNull final String response) {
         String startSubstring = "(\n";
         String endSubstring = "0,0";
 
@@ -132,9 +207,9 @@ public class DeviceService {
      * Заблокировать устройство
      *
      * @param sessionId ID сессии
-     * @param device Блокируемое устройство
+     * @param device    блокируемое устройство
      */
-    public void blockDevice(String sessionId, Device device) {
+    public void blockDevice(final String sessionId, @NonNull Device device) {
 
         device.setIndexHosts(createHost(sessionId, device));
         device.setIndexRules(createRule(sessionId, device));
@@ -146,9 +221,9 @@ public class DeviceService {
     /**
      * Создание имени для Хоста или Правила
      *
-     * @param start Указать "Host" или "Rule"
-     * @param name Имя устройства
-     * @return Сгенерированное имя
+     * @param start указать "Host" или "Rule"
+     * @param name  имя устройства
+     * @return сгенерированное имя
      */
     private String giveNameForHostOrRule(String start, String name) {
         return String.format("%s_%.19s", start, name);
@@ -158,78 +233,60 @@ public class DeviceService {
      * Создать Хост
      *
      * @param sessionId ID сессии
-     * @param device Переданное утройство
-     * @return Индекс хоста в списке хостов
+     * @param device    переданное утройство
+     * @return индекс хоста в списке хостов
+     * @throws DeviceAlreadyBlockedException Устройство уже заблокировано
      */
-    private int createHost(String sessionId, Device device) {
+    private int createHost(final String sessionId, @NonNull Device device) {
         String hostName = giveNameForHostOrRule("Host", device.getName());
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm?" +
-                            "addr_type=0&hosts_lists_name=" + hostName + "&src_ip_start=&src_ip_end=&" +
-                            "mac_addr=" + device.getMacAddress() + "&Changed=0&SelIndex=0&fromAdd=0&Page=1&" +
-                            "Save=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm")
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm?" +
+                "addr_type=0&hosts_lists_name=" + hostName + "&src_ip_start=&src_ip_end=&" +
+                "mac_addr=" + device.getMacAddress() + "&Changed=0&SelIndex=0&fromAdd=0&Page=1&" +
+                "Save=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C";
+        String referer = routerIP + sessionId + "/userRpm/AssignedIpAddrListRpm.htm";
 
-            if (response.body().contains("errCode")) {
-                throw new DeviceAlreadyBlockedException(device);
-            }
+        HttpResponse<String> response = getHttpResponse(uri, referer);
 
-            return getIndexFromResponse(response.body());
-
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        if (response.body().contains("errCode")) {
+            throw new DeviceAlreadyBlockedException(device);
         }
+
+        return getIndexFromResponse(response.body());
     }
 
     /**
      * Создать правило
      *
      * @param sessionId ID сессии
-     * @param device Переданное устройство
-     * @return Индекс правила в списке правил
+     * @param device    переданное устройство
+     * @return индекс правила в списке правил
      */
-    private int createRule(String sessionId, Device device) {
+    private int createRule(final String sessionId, @NonNull Device device) {
         String ruleName = giveNameForHostOrRule("Rule", device.getName());
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?" +
-                            "rule_name=" + ruleName + "&hosts_lists=" + device.getIndexHosts() +
-                            "&targets_lists=255&scheds_lists=255&enable=1&Changed=0&SelIndex=0&Page=1" +
-                            "&Save=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId +
-                            "/userRpm/AccessCtrlAccessRulesRpm.htm?Add=Add&Page=1")
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?" +
+                "rule_name=" + ruleName + "&hosts_lists=" + device.getIndexHosts() +
+                "&targets_lists=255&scheds_lists=255&enable=1&Changed=0&SelIndex=0&Page=1" +
+                "&Save=%D0%A1%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B8%D1%82%D1%8C";
+        String referer = routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?Add=Add&Page=1";
 
-            if (response.body().contains("errCode")) {
-                throw new DeviceAlreadyBlockedException(device);
-            }
+        HttpResponse<String> response = getHttpResponse(uri, referer);
 
-            return getIndexFromResponse(response.body());
-
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        if (response.body().contains("errCode")) {
+            throw new DeviceAlreadyBlockedException(device);
         }
+
+        return getIndexFromResponse(response.body());
     }
 
     /**
      * Получить индекс из HTTP Response
      *
      * @param response HTTP Response
-     * @return Индекс
+     * @return индекс
      */
-    private int getIndexFromResponse(String response) {
+    private int getIndexFromResponse(@NonNull final String response) {
 
         String[] subresponse = getSubresponseFromResponse(response)
                 .trim()
@@ -244,33 +301,24 @@ public class DeviceService {
      * @param sessionId ID сессии
      * @return HTTP Response
      */
-    private String getResponseWithBlockedDevices(String sessionId) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/MenuRpm.htm")
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
+    private String getResponseWithBlockedDevices(final String sessionId) {
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm";
+        String referer = routerIP + sessionId + "/userRpm/MenuRpm.htm";
 
-            return getSubresponseFromResponse(response.body());
+        HttpResponse<String> response = getHttpResponse(uri, referer);
 
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        return getSubresponseFromResponse(response.body());
     }
 
     /**
      * Проверка на наличие устройства в HTTP Response
      *
-     * @param device Переданное устройство
+     * @param device   переданное устройство
      * @param response HTTP Response
-     * @return Логическое выражение
+     * @return логическое выражение
      */
-    private boolean isBlocked(Device device, String response) {
+    private boolean isBlocked(@NonNull Device device, @NonNull final String response) {
 
         return response.contains(giveNameForHostOrRule("Rule", device.getName()));
     }
@@ -278,11 +326,11 @@ public class DeviceService {
     /**
      * Получить список заблокированных устройств
      *
-     * @param sessionId ID сессии
-     * @param savedDevices Список сохраненных в базе устройств
-     * @return Список заблокированных устройств
+     * @param sessionId    ID сессии
+     * @param savedDevices список сохраненных в базе устройств
+     * @return список заблокированных устройств
      */
-    public List<Device> getListBlockedDevices(String sessionId, List<Device> savedDevices) {
+    public List<Device> getListBlockedDevices(final String sessionId, List<Device> savedDevices) {
 
         String response = getResponseWithBlockedDevices(sessionId);
 
@@ -309,9 +357,9 @@ public class DeviceService {
      * Разблокировать устройство
      *
      * @param sessionId ID сессии
-     * @param device Переданное устройство
+     * @param device    переданное устройство
      */
-    public void unblockDevice(String sessionId, Device device) {
+    public void unblockDevice(final String sessionId, @NonNull Device device) {
 
         device = getDeviceFromDatabase(device.getMacAddress());
         String response = getResponseWithBlockedDevices(sessionId);
@@ -338,69 +386,51 @@ public class DeviceService {
      * Удалить Правило
      *
      * @param sessionId ID сессии
-     * @param device Переданное устройство
+     * @param device    переданное устройство
      * @return -1 (отрицательный индекс)
      */
-    private int deleteRule(String sessionId, Device device) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?" +
-                            "Del=" + device.getIndexRules() + "&Page=1"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm")
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
+    private int deleteRule(final String sessionId, @NonNull Device device) {
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm?" +
+                "Del=" + device.getIndexRules() + "&Page=1";
+        String referer = routerIP + sessionId + "/userRpm/AccessCtrlAccessRulesRpm.htm";
 
-            if (response.body().contains("errCode")) {
-                throw new DeviceNotBlockedException(device);
-            }
+        HttpResponse<String> response = getHttpResponse(uri, referer);
 
-            return -1;
-
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        if (response.body().contains("errCode")) {
+            throw new DeviceNotBlockedException(device);
         }
+
+        return -1;
     }
 
     /**
      * Удалить Хост
      *
      * @param sessionId ID сессии
-     * @param device Переданное устройство
+     * @param device    переданное устройство
      * @return -1 (отрицательный индекс)
      */
-    private int deleteHost(String sessionId, Device device) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm?" +
-                            "Del=" + device.getIndexHosts() + "&Page=1"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm")
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
+    private int deleteHost(final String sessionId, @NonNull Device device) {
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm?" +
+                "Del=" + device.getIndexHosts() + "&Page=1";
+        String referer = routerIP + sessionId + "/userRpm/AccessCtrlHostsListsRpm.htm";
 
-            if (response.body().contains("errCode")) {
-                throw new DeviceNotBlockedException(device);
-            }
+        HttpResponse<String> response = getHttpResponse(uri, referer);
 
-            return -1;
-
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
+        if (response.body().contains("errCode")) {
+            throw new DeviceNotBlockedException(device);
         }
+
+        return -1;
     }
 
     /**
      * Пересчитать индексы устройств после разблокировки
      *
-     * @param hostIndex Индекс хоста разблокированного устройства
-     * @param ruleIndex Индекс правила разблокированного устройства
+     * @param hostIndex индекс хоста разблокированного устройства
+     * @param ruleIndex индекс правила разблокированного устройства
      */
     private void recalculateIndexes(int hostIndex, int ruleIndex) {
         List<Device> devices = getListDevicesFromDatabase();
@@ -431,25 +461,16 @@ public class DeviceService {
      * @return ID сессии
      */
     public String login() {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + "userRpm/LoginRpm.htm?Save=Save"))
-                    .header(HttpHeaders.REFERER, routerIP)
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
 
-            HttpResponse<String> response = HttpClient.newHttpClient()
-                    .send(request, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + "userRpm/LoginRpm.htm?Save=Save";
 
-            if (response.statusCode() == 200) {
-                return getSessionFromResponse(response.body());
-            } else
-                return "";
+        HttpResponse<String> response = getHttpResponse(uri, routerIP);
+        final String body = response.body();
 
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        if (response.statusCode() == 200 && body != null)
+            return getSessionFromResponse(body);
+        else
+            return "";
     }
 
     /**
@@ -458,7 +479,8 @@ public class DeviceService {
      * @param response HTTP Response
      * @return ID сессии
      */
-    private String getSessionFromResponse(String response) {
+    @NonNull
+    private String getSessionFromResponse(@NonNull final String response) {
         int firstIndex = response.indexOf(routerIP) + routerIP.length();
         int lastIndex = response.indexOf("/userRpm");
 
@@ -469,37 +491,23 @@ public class DeviceService {
      * Отключение от роутера
      *
      * @param sessionId ID сессии
-     * @return Информационное сообщение
+     * @return информационное сообщение
      */
-    public String logout(String sessionId) {
-        try {
-            HttpRequest firstRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP + sessionId + "/userRpm/LogoutRpm.htm"))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/MenuRpm.htm")
-                    .header(HttpHeaders.COOKIE, authToken)
-                    .GET()
-                    .build();
+    public String logout(final String sessionId) {
 
-            HttpResponse<String> firstResponse = HttpClient.newHttpClient()
-                    .send(firstRequest, HttpResponse.BodyHandlers.ofString());
+        String uri = routerIP + sessionId + "/userRpm/LogoutRpm.htm";
+        String referer = routerIP + sessionId + "/userRpm/MenuRpm.htm";
 
-            HttpRequest secondRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(routerIP))
-                    .header(HttpHeaders.REFERER, routerIP + sessionId + "/userRpm/LogoutRpm.htm")
-                    .GET()
-                    .build();
+        HttpResponse<String> firstResponse = getHttpResponse(uri, referer);
 
-            HttpResponse<String> secondResponse = HttpClient.newHttpClient()
-                    .send(secondRequest, HttpResponse.BodyHandlers.ofString());
+        referer = routerIP + sessionId + "/userRpm/LogoutRpm.htm";
 
-            if (firstResponse.statusCode() == 200 && secondResponse.statusCode() == 200) {
-                return "Logged out successfully";
-            } else
-                return "Logged out failed";
+        HttpResponse<String> secondResponse = getHttpResponse(routerIP, referer);
 
-        } catch (IOException | InterruptedException e) {
-            throw new RuntimeException(e);
-        }
+        if (firstResponse.statusCode() == 200 && secondResponse.statusCode() == 200) {
+            return "Logged out successfully";
+        } else
+            return "Logged out failed";
     }
 
 }

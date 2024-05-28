@@ -24,9 +24,9 @@ class DeviceServiceIntegrationTest {
     }
 
     @Test
-    void getListConnectedDevices() {
+    void getListClientsDHCP() {
         String sessionId = deviceService.login();
-        List<Device> devices = deviceService.getListConnectedDevices(sessionId);
+        List<Device> devices = deviceService.getListClientsDHCP(sessionId);
         deviceService.logout(sessionId);
 
         assertNotNull(devices);

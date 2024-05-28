@@ -7,11 +7,12 @@ import org.springframework.web.bind.annotation.*;
 import ru.dmalomoshin.tplink_blocker.domain.Device;
 import ru.dmalomoshin.tplink_blocker.services.DeviceService;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * WEB-контроллер.
- * Основная страница http://localhost:8080/tp-link
+ * Основная страница <a href="http://localhost:8080/tp-link">http://localhost:8080/tp-link</a>
  */
 @Controller
 @AllArgsConstructor
@@ -27,18 +28,23 @@ public class DeviceControllerWeb {
      * 1. Подключенные в данный момент устройства без учёта заблокированных
      * 2. Заблокированные устройства
      *
-     * @param model Взаимодействие с Thymeleaf
-     * @return Главная страница
+     * @param model взаимодействие с Thymeleaf
+     * @return главная страница
      */
     @GetMapping()
     public String getConnectedDevices(Model model) {
         String sessionId = deviceService.login();
 
-        List<Device> connectedDevices = deviceService.getListConnectedDevices(sessionId);
+        List<Device> clientsDHCP = deviceService.getListClientsDHCP(sessionId);
+
+        List<Device> connectedDevices = new ArrayList<>();
+        connectedDevices.addAll(deviceService.getListConnectedDevices2and4Ghz(sessionId));
+        connectedDevices.addAll(deviceService.getListConnectedDevices5Ghz(sessionId));
+
         List<Device> savedDevices = deviceService.getListDevicesFromDatabase();
         List<Device> blockedDevices = deviceService.getListBlockedDevices(sessionId, savedDevices);
 
-        connectedDevices.stream()
+        clientsDHCP.stream()
                 .filter(device -> !savedDevices.contains(device))
                 .forEach(deviceService::addDeviceInDatabase);
 
@@ -54,8 +60,8 @@ public class DeviceControllerWeb {
     /**
      * Заблокировать устройство
      *
-     * @param device Переданное через кнопку устройство
-     * @return Возврат на главную страницу
+     * @param device переданное через кнопку устройство
+     * @return возврат на главную страницу
      */
     @PostMapping("/block")
     public String blockDevice(Device device) {
@@ -70,8 +76,8 @@ public class DeviceControllerWeb {
     /**
      * Разблокировать устройство
      *
-     * @param device Переданное через кнопку устройство
-     * @return Возврат на главную страницу
+     * @param device переданное через кнопку устройство
+     * @return возврат на главную страницу
      */
     @PostMapping("/unblock")
     public String unblockDevice(Device device) {
@@ -86,8 +92,8 @@ public class DeviceControllerWeb {
     /**
      * Показать сохраненные в базе устройства
      *
-     * @param model Взаимодействие с Thymeleaf
-     * @return Страница с сохраненными в базе устройствами
+     * @param model взаимодействие с Thymeleaf
+     * @return страница с сохраненными в базе устройствами
      */
     @GetMapping("/saved")
     public String getDevicesFromDatabase(Model model) {
