@@ -37,16 +37,17 @@ public class DeviceControllerWeb {
 
         List<Device> clientsDHCP = deviceService.getListClientsDHCP(sessionId);
 
-        List<Device> connectedDevices = new ArrayList<>();
-        connectedDevices.addAll(deviceService.getListConnectedDevices2and4Ghz(sessionId));
-        connectedDevices.addAll(deviceService.getListConnectedDevices5Ghz(sessionId));
-
         List<Device> savedDevices = deviceService.getListDevicesFromDatabase();
-        List<Device> blockedDevices = deviceService.getListBlockedDevices(sessionId, savedDevices);
+        List<Device> blockedDevices = savedDevices.isEmpty() ?
+                new ArrayList<>() : deviceService.getListBlockedDevices(sessionId, savedDevices);
 
         clientsDHCP.stream()
                 .filter(device -> !savedDevices.contains(device))
                 .forEach(deviceService::addDeviceInDatabase);
+
+        List<Device> connectedDevices = new ArrayList<>();
+        connectedDevices.addAll(deviceService.getListConnectedDevices2and4Ghz(sessionId));
+        connectedDevices.addAll(deviceService.getListConnectedDevices5Ghz(sessionId));
 
         connectedDevices.removeAll(blockedDevices);
 
